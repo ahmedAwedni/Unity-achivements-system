@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class AchievementManager : MonoBehaviour
+public class AchievementManager : MonoBehaviour, ISaveable
 {
     public static AchievementManager Instance { get; private set; }
 
@@ -13,9 +13,20 @@ public class AchievementManager : MonoBehaviour
     [Header("Database")]
     public List<AchievementData> allAchievements;
 
-    // Runtime Tracking (Easy to serialize for a Save System later)
+    // Runtime Tracking
     private Dictionary<string, int> achievementProgress = new Dictionary<string, int>();
     private HashSet<string> unlockedAchievements = new HashSet<string>();
+
+    // --- ISaveable Implementation ---
+    public string SaveID => "Global_Achievements";
+
+    [System.Serializable]
+    private struct AchievementSaveData
+    {
+        public List<string> savedUnlockedAchievements;
+        public List<string> progressKeys;
+        public List<int> progressValues;
+    }
 
     private void Awake()
     {
@@ -30,35 +41,29 @@ public class AchievementManager : MonoBehaviour
 
     private void OnEnable()
     {
-        // Subscribe to the global event bus
         GameEvents.OnProgressMade += HandleProgress;
         GameEvents.OnInstantUnlock += UnlockAchievement;
     }
 
     private void OnDisable()
     {
-        // Always unsubscribe to prevent memory leaks
         GameEvents.OnProgressMade -= HandleProgress;
         GameEvents.OnInstantUnlock -= UnlockAchievement;
     }
 
     private void HandleProgress(string eventID, int amount)
     {
-        // Find all achievements that care about this specific event
         foreach (AchievementData achievement in allAchievements)
         {
             if (achievement.progressEventID == eventID && !unlockedAchievements.Contains(achievement.achievementID))
             {
-                // Initialize progress tracking if it doesn't exist yet
                 if (!achievementProgress.ContainsKey(achievement.achievementID))
                 {
                     achievementProgress[achievement.achievementID] = 0;
                 }
 
-                // Add progress
                 achievementProgress[achievement.achievementID] += amount;
 
-                // Check for completion
                 if (achievementProgress[achievement.achievementID] >= achievement.targetGoal)
                 {
                     UnlockAchievement(achievement.achievementID);
@@ -69,7 +74,7 @@ public class AchievementManager : MonoBehaviour
 
     private void UnlockAchievement(string achievementID)
     {
-        if (unlockedAchievements.Contains(achievementID)) return; // Already unlocked
+        if (unlockedAchievements.Contains(achievementID)) return;
 
         AchievementData achievement = allAchievements.Find(a => a.achievementID == achievementID);
         
@@ -78,8 +83,38 @@ public class AchievementManager : MonoBehaviour
             unlockedAchievements.Add(achievementID);
             Debug.Log($"🏆 Achievement Unlocked: {achievement.title}");
             
-            // Tell the UI to show the popup!
             OnAchievementUnlocked?.Invoke(achievement);
         }
+    }
+
+    // --- Save & Load Logic ---
+    public string SaveState()
+    {
+        // Pack Dictionaries and HashSets into Lists so JsonUtility can read them
+        AchievementSaveData data = new AchievementSaveData
+        {
+            savedUnlockedAchievements = new List<string>(unlockedAchievements),
+            progressKeys = new List<string>(achievementProgress.Keys),
+            progressValues = new List<int>(achievementProgress.Values)
+        };
+
+        return JsonUtility.ToJson(data);
+    }
+
+    public void LoadState(string stateJson)
+    {
+        AchievementSaveData data = JsonUtility.FromJson<AchievementSaveData>(stateJson);
+
+        // Restore the unlocked HashSet
+        unlockedAchievements = new HashSet<string>(data.savedUnlockedAchievements);
+
+        // Restore the progress Dictionary
+        achievementProgress.Clear();
+        for (int i = 0; i < data.progressKeys.Count; i++)
+        {
+            achievementProgress.Add(data.progressKeys[i], data.progressValues[i]);
+        }
+
+        Debug.Log("Achievement data loaded successfully.");
     }
 }
